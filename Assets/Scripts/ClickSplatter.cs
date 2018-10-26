@@ -52,7 +52,7 @@ public class ClickSplatter : MonoBehaviour
     {
         RaycastHit hit;
 
-        if (Input.GetMouseButtonDown(1))
+        if (Input.GetMouseButtonDown(2))
         {
             Channel++;
             if (Channel > 3)
