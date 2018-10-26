@@ -1,0 +1,106 @@
+﻿// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel ComputeSplatter
+#pragma kernel ComputeTerrainSplatter
+
+#define thread_group_size_x 8
+#define thread_group_size_y 8
+
+#include "UnityCG.cginc"
+
+RWStructuredBuffer<uint> oColor;
+RWStructuredBuffer<float3> iPosition;
+RWStructuredBuffer<float3> iNormal;
+
+Texture2D<float4> TerrainHeightmap;
+RWTexture2D<float4> TerrainResult;
+
+CBUFFER_START(Params)
+	uint iVertexCount;
+
+	float4x4 iL2W;
+	uint iChannel;
+	float4 iStartPos;
+	float iRadius;
+
+	float2 iTerrainSize;
+CBUFFER_END
+
+
+[numthreads(thread_group_size_x, thread_group_size_y, 1)]
+void ComputeSplatter(uint3 id : SV_DispatchThreadID)
+{
+	// Grab vertex index
+	uint idx = id.x + id.y*8;
+	if (idx >= iVertexCount)
+		return;
+
+	// Grab color
+	uint c = oColor[idx];
+
+	// Grab world space position and normal
+	float4 lVPos = float4(iPosition[idx], 1);
+	float3 wVPos = mul(iL2W, lVPos).xyz;
+	float3 wVNor = normalize(mul((float3x3)iL2W, iNormal[idx]));
+	
+	// Get direction and distance
+	float3 dir = (wVPos - iStartPos.xyz);
+	float dist = length(dir);
+
+
+	// If the vertex is close enough and is facing the direction of the source
+	if (dist < iRadius && dot(wVNor, dir/dist) < 0.4)
+	{
+		// The color is stored as RGBA32
+		// We're just grabbing the input channel based on iChannel...
+		uint cValue = (c >> iChannel) & 0xFF;
+		float value = cValue / 255.0;
+
+
+		// Increasing it based on distance...
+		float strength = pow(1 - (dist / iRadius), 1);
+		value = saturate(max(value + strength, value));
+
+
+		// And storing it as the resulting color (all other channels set to 0)
+		cValue = (uint)(value * 255) & 255;
+		c = (cValue << iChannel);
+	}
+
+	oColor[idx] = c;
+}
+
+[numthreads(thread_group_size_x, thread_group_size_y, 1)]
+void ComputeTerrainSplatter(uint3 id : SV_DispatchThreadID)
+{
+	// Grab color
+	float4 value = TerrainResult[id.xy];
+
+	// Get world space position
+	float4 lp = float4(id.x / iTerrainSize.x, TerrainHeightmap[id.xy].r, id.y / iTerrainSize.y, 1);
+	float3 wp = mul(iL2W, lp).xyz;
+
+	// Get direction and distance
+	float3 dir = (wp - iStartPos.xyz);
+	float dist = length(dir);
+
+	// If close enough...
+	if (dist < iRadius)
+	{
+		// Increase value by distance
+		float strength = pow(1 - (dist / iRadius), 1);
+		float4 newValue = saturate(max(value + strength, value));
+
+		// Update color (all other channels set to 0)
+		if (iChannel == 0)
+			value = float4(newValue.r, 0, 0, 0);
+		else if (iChannel == 1)
+			value = float4(0, newValue.g, 0, 0);
+		else if (iChannel == 2)
+			value = float4(0, 0, newValue.b, 0);
+		else
+			value = float4(0, 0, 0, newValue.a);
+	}
+
+	TerrainResult[id.xy] = value;
+}
+
